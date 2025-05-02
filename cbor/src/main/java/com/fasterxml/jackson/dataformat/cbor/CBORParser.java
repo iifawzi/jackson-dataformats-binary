@@ -796,6 +796,8 @@ public class CBORParser extends ParserMinimalBase
                 return _updateToken(_decodePropertyName());
             }
         } else {
+
+            // TODO: Fawzi add this in async
             if (!_streamReadContext.expectMoreValues()) {
                 _stringRefs.pop();
                 _tagValues.clear();

@@ -164,6 +164,24 @@ public final class CBORReadContext
     }
 
     /**
+     * Decrements the current entry count index.
+     * Used to adjust the index after processing metadata bytes (like length/value indicators)
+     * that shouldn't count towards the expected entry count.
+     * This ensures that expectMoreValues() correctly tracks only actual content elements,
+     * not their metadata descriptors.
+     *
+     * <p>For example, when processing an array:
+     * - Length bytes are processed (index incremented)
+     * - decreaseIndex() is called to exclude those bytes from element count
+     * - Actual array elements are then processed with correct indexing
+     */
+    public void decreaseIndex(int amount) {
+        _index -= amount;
+    }
+
+
+
+    /**
      * @return Location pointing to the point where the context
      *   start marker was found
      */

@@ -8,6 +8,8 @@ import com.fasterxml.jackson.core.format.InputAccessor;
 import com.fasterxml.jackson.core.format.MatchStrength;
 import com.fasterxml.jackson.core.io.ContentReference;
 import com.fasterxml.jackson.core.io.IOContext;
+import com.fasterxml.jackson.core.sym.ByteQuadsCanonicalizer;
+import com.fasterxml.jackson.dataformat.cbor.async.NonBlockingByteArrayParser;
 
 /**
  * Factory used for constructing {@link CBORParser} and {@link CBORGenerator}
@@ -466,4 +468,17 @@ public class CBORFactory extends JsonFactory
     protected <T> T _nonByteTarget() {
         throw new UnsupportedOperationException("Can not create generator for non-byte-based target");
     }
+
+    /**
+     * @since 2.9
+     */
+    @Override
+    public NonBlockingByteArrayParser createNonBlockingByteArrayParser() throws IOException {
+        IOContext ctxt = _createContext(null, false);
+        // 13-Mar-2021, tatu: [dataformats-binary#252] Leave async parser with
+        //   always-canonicalizing, for now (2.13) -- to be improved in future
+        ByteQuadsCanonicalizer can = _byteSymbolCanonicalizer.makeChildOrPlaceholder(_factoryFeatures);
+        return new NonBlockingByteArrayParser(ctxt);
+    }
+
 }
