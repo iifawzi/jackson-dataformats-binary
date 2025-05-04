@@ -1471,6 +1471,31 @@ public class BasicParserTest extends CBORTestBase
     }
 
     @Test
+    public void testStartObjectTokenWithIntField() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        CBORGenerator generator = cborGenerator(out);
+        generator.writeStartObject(null, 2);
+        generator.writeNumberField("id", 1);
+        generator.writeNumberField("id2", 3);
+        generator.close();
+        byte[] data = out.toByteArray();
+
+        NonBlockingByteArrayParser parser = new CBORFactory()
+                .createNonBlockingByteArrayParser();
+        parser.feedInput(data, 0, 1);
+        assertEquals(JsonToken.START_OBJECT,  parser.nextToken());
+        assertEquals("{", parser.getText());
+        parser.feedInput(data, 1, 1000);
+        assertEquals(JsonToken.FIELD_NAME,  parser.nextToken());
+        assertEquals(JsonToken.VALUE_NUMBER_INT,  parser.nextToken());
+        assertEquals(1,  parser.getIntValue());
+        assertEquals(JsonToken.FIELD_NAME,  parser.nextToken());
+        assertEquals(JsonToken.VALUE_NUMBER_INT,  parser.nextToken());
+        assertEquals(3,  parser.getIntValue());
+        assertEquals(JsonToken.END_OBJECT,  parser.nextToken());
+    }
+
+    @Test
     public void testStartObjectTokenWithBigName() throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         CBORGenerator generator = cborGenerator(out);
@@ -1702,6 +1727,250 @@ public class BasicParserTest extends CBORTestBase
             assertEquals(expected, parser.nextToken());
         }
         assertEquals(fieldName, parser.currentName());
+    }
+
+    @Test
+    public void testSimpleObject() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        CBORGenerator generator = cborGenerator(out);
+
+        generator.writeStartObject(null, 1);
+        generator.writeNumberField("id", 1);
+        generator.writeEndObject();
+        generator.close();
+
+        byte[] data = out.toByteArray();
+        NonBlockingByteArrayParser parser = new CBORFactory()
+                .createNonBlockingByteArrayParser();
+
+        // First byte: map with 1 entry (0xA1)
+        parser.feedInput(data, 0, 1);
+        assertEquals(JsonToken.START_OBJECT, parser.nextToken());
+
+        // Next bytes: text string of length 2 (0x62) followed by "id"
+        parser.feedInput(data, 1, 4);
+        assertEquals(JsonToken.FIELD_NAME, parser.nextToken());
+        assertEquals("id", parser.currentName());
+
+        // Last byte: number 1 (0x01)
+        parser.feedInput(data, 4, 5);
+        assertEquals(JsonToken.VALUE_NUMBER_INT, parser.nextToken());
+        assertEquals(1, parser.getIntValue());
+
+        assertEquals(JsonToken.END_OBJECT, parser.nextToken());
+    }
+
+    @Test
+    public void testComplexObjectWithArrays() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        CBORGenerator generator = cborGenerator(out);
+
+        // Create complex structure
+        generator.writeStartObject(null, 3);
+        generator.writeNumberField("id", 42);
+
+        generator.writeFieldName("numbers");
+        generator.writeStartArray(null, 3);
+        generator.writeNumber(1);
+        generator.writeNumber(-2);
+        generator.writeNumber(3);
+        generator.writeEndArray();
+
+        generator.writeFieldName("nested");
+        generator.writeStartObject(null, 2);
+        generator.writeNumberField("pos", 99);
+        generator.writeNumberField("neg", -99);
+
+        generator.close();
+
+        byte[] data = out.toByteArray();
+        NonBlockingByteArrayParser parser = new CBORFactory()
+                .createNonBlockingByteArrayParser();
+
+        // Start object with 3 entries (0xA3)
+        parser.feedInput(data, 0, 1);
+        assertEquals(JsonToken.START_OBJECT, parser.nextToken());
+
+        // "id" field (0x62 followed by "id")
+        parser.feedInput(data, 1, 4);
+        assertEquals(JsonToken.FIELD_NAME, parser.nextToken());
+        assertEquals("id", parser.currentName());
+
+        // value 42 (0x18 0x2A)
+        parser.feedInput(data, 4, 6);
+        assertEquals(JsonToken.VALUE_NUMBER_INT, parser.nextToken());
+        assertEquals(42, parser.getIntValue());
+
+        // "numbers" field (0x67 followed by "numbers")
+        parser.feedInput(data, 6, 14);
+        assertEquals(JsonToken.FIELD_NAME, parser.nextToken());
+        assertEquals("numbers", parser.currentName());
+
+        // array of 3 elements (0x83)
+        parser.feedInput(data, 14, 15);
+        assertEquals(JsonToken.START_ARRAY, parser.nextToken());
+
+        // value 1 (0x01)
+        parser.feedInput(data, 15, 16);
+        assertEquals(JsonToken.VALUE_NUMBER_INT, parser.nextToken());
+        assertEquals(1, parser.getIntValue());
+
+        // value -2 (0x21)
+        parser.feedInput(data, 16, 17);
+        assertEquals(JsonToken.VALUE_NUMBER_INT, parser.nextToken());
+        assertEquals(-2, parser.getIntValue());
+
+        // value 3 (0x03)
+        parser.feedInput(data, 17, 18);
+        assertEquals(JsonToken.VALUE_NUMBER_INT, parser.nextToken());
+        assertEquals(3, parser.getIntValue());
+
+        // array end (implicit)
+        assertEquals(JsonToken.END_ARRAY, parser.nextToken());
+
+        // "nested" field (0x66 followed by "nested")
+        parser.feedInput(data, 18, 25);
+        assertEquals(JsonToken.FIELD_NAME, parser.nextToken());
+        assertEquals("nested", parser.currentName());
+
+        // nested object with 2 pairs (0xA2)
+        parser.feedInput(data, 25, 26);
+        assertEquals(JsonToken.START_OBJECT, parser.nextToken());
+
+        // "pos" field (0x63 followed by "pos")
+        parser.feedInput(data, 26, 30);
+        assertEquals(JsonToken.FIELD_NAME, parser.nextToken());
+        assertEquals("pos", parser.currentName());
+
+        // value 99 (0x18 0x63)
+        parser.feedInput(data, 30, 32);
+        assertEquals(JsonToken.VALUE_NUMBER_INT, parser.nextToken());
+        assertEquals(99, parser.getIntValue());
+
+        // "neg" field (0x63 followed by "neg")
+        parser.feedInput(data, 32, 36);
+        assertEquals(JsonToken.FIELD_NAME, parser.nextToken());
+        assertEquals("neg", parser.currentName());
+
+        // value -99 (0x38 0x62)
+        parser.feedInput(data, 36, 38);
+        assertEquals(JsonToken.VALUE_NUMBER_INT, parser.nextToken());
+        assertEquals(-99, parser.getIntValue());
+
+        // nested object end (implicit)
+        assertEquals(JsonToken.END_OBJECT, parser.nextToken());
+
+        // root object end (implicit)
+        assertEquals(JsonToken.END_OBJECT, parser.nextToken());
+
+        assertNull(parser.nextToken());
+    }
+
+
+    @Test
+    public void testNestedNumberArrays() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        CBORGenerator generator = cborGenerator(out);
+
+        generator.writeStartArray(null, 3);
+
+        // First element: array of small numbers
+        generator.writeStartArray(null, 3);
+        generator.writeNumber(1);
+        generator.writeNumber(2);
+        generator.writeNumber(3);
+        generator.writeEndArray();
+
+        // Second element: array of numbers requiring 2 bytes
+        generator.writeStartArray(null, 3);
+        generator.writeNumber(256);
+        generator.writeNumber(-1000);
+        generator.writeNumber(500);
+        generator.writeEndArray();
+
+        // Third element: object with number fields
+        generator.writeStartObject(null, 2);
+        generator.writeNumberField("x", 42);
+        generator.writeNumberField("y", -42);
+        generator.writeEndObject();
+
+        generator.close();
+
+        byte[] data = out.toByteArray();
+        NonBlockingByteArrayParser parser = new CBORFactory()
+                .createNonBlockingByteArrayParser();
+
+        // Start array with 3 elements (0x83)
+        parser.feedInput(data, 0, 1);
+        assertEquals(JsonToken.START_ARRAY, parser.nextToken());
+
+        // First nested array with 3 elements (0x83)
+        parser.feedInput(data, 1, 2);
+        assertEquals(JsonToken.START_ARRAY, parser.nextToken());
+
+        // Simple numbers (0x01, 0x02, 0x03)
+        parser.feedInput(data, 2, 3);
+        assertEquals(JsonToken.VALUE_NUMBER_INT, parser.nextToken());
+        assertEquals(1, parser.getIntValue());
+
+        parser.feedInput(data, 3, 4);
+        assertEquals(JsonToken.VALUE_NUMBER_INT, parser.nextToken());
+        assertEquals(2, parser.getIntValue());
+
+        parser.feedInput(data, 4, 5);
+        assertEquals(JsonToken.VALUE_NUMBER_INT, parser.nextToken());
+        assertEquals(3, parser.getIntValue());
+
+        assertEquals(JsonToken.END_ARRAY, parser.nextToken());
+
+        // Second nested array with 3 elements (0x83)
+        parser.feedInput(data, 5, 6);
+        assertEquals(JsonToken.START_ARRAY, parser.nextToken());
+
+        // 256 (0x19 0x0100)
+        parser.feedInput(data, 6, 9);
+        assertEquals(JsonToken.VALUE_NUMBER_INT, parser.nextToken());
+        assertEquals(256, parser.getIntValue());
+
+        // -1000 (0x39 0x03E7)
+        parser.feedInput(data, 9, 12);
+        assertEquals(JsonToken.VALUE_NUMBER_INT, parser.nextToken());
+        assertEquals(-1000, parser.getIntValue());
+
+        // 500 (0x19 0x01F4)
+        parser.feedInput(data, 12, 15);
+        assertEquals(JsonToken.VALUE_NUMBER_INT, parser.nextToken());
+        assertEquals(500, parser.getIntValue());
+
+        assertEquals(JsonToken.END_ARRAY, parser.nextToken());
+
+        // Object with 2 entries (0xA2)
+        parser.feedInput(data, 15, 16);
+        assertEquals(JsonToken.START_OBJECT, parser.nextToken());
+
+        // "x" field (0x61 followed by "x")
+        parser.feedInput(data, 16, 18);
+        assertEquals(JsonToken.FIELD_NAME, parser.nextToken());
+        assertEquals("x", parser.currentName());
+
+        // 42 (0x18 0x2A)
+        parser.feedInput(data, 18, 20);
+        assertEquals(JsonToken.VALUE_NUMBER_INT, parser.nextToken());
+        assertEquals(42, parser.getIntValue());
+
+        // "y" field (0x61 followed by "y")
+        parser.feedInput(data, 20, 22);
+        assertEquals(JsonToken.FIELD_NAME, parser.nextToken());
+        assertEquals("y", parser.currentName());
+
+        // -42 (0x38 0x29)
+        parser.feedInput(data, 22, 24);
+        assertEquals(JsonToken.VALUE_NUMBER_INT, parser.nextToken());
+        assertEquals(-42, parser.getIntValue());
+
+        assertEquals(JsonToken.END_OBJECT, parser.nextToken());
+        assertEquals(JsonToken.END_ARRAY, parser.nextToken());
+        assertNull(parser.nextToken());
     }
 
 

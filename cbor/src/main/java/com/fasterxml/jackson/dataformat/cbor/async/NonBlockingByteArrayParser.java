@@ -586,7 +586,7 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
         return JsonToken.FIELD_NAME;
     }
 
-    private final String _decodeContiguousName(final int len,  byte[] inBuf, int _inputPtr) throws IOException
+    private final String _decodeContiguousName(final int len,  byte[] inBuf, int inputPtr) throws IOException
     {
         // note: caller ensures we have enough bytes available
         int outPtr = 0;
@@ -594,7 +594,7 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
         if (outBuf.length < len) { // one minor complication
             outBuf = _textBuffer.expandCurrentSegment(len);
         }
-        int inPtr = _inputPtr;
+        int inPtr = inputPtr;
         final int[] codes = UTF8_UNIT_CODES;
 
         // First a tight loop for ASCII
@@ -607,6 +607,7 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
             }
             outBuf[outPtr++] = (char) i;
             if (++inPtr == end) {
+                _inputPtr += len;
                 return _textBuffer.setCurrentAndReturn(outPtr);
             }
         }
@@ -664,6 +665,7 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
             }
             outBuf[outPtr++] = (char) i;
         }
+        _inputPtr += len;
         return _textBuffer.setCurrentAndReturn(outPtr);
     }
 
@@ -712,7 +714,6 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
 
         if (readBytes == _pendingFieldNameBytesLength) {
             _streamReadContext.setCurrentName(_decodeContiguousName(readBytes, copyBuffer, 0));
-            _inputPtr = _inputPtr + readBytes;
             return true;
         }
 
