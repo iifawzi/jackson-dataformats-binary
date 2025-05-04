@@ -2,6 +2,7 @@ package com.fasterxml.jackson.dataformat.cbor.parse;
 
 import java.io.*;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.UUID;
 
@@ -1465,5 +1466,244 @@ public class BasicParserTest extends CBORTestBase
         parser.feedInput(data, 0, 1);
         assertEquals(JsonToken.START_OBJECT,  parser.nextToken());
         assertEquals("{", parser.getText());
+        parser.feedInput(data, 1, 42);
+        assertEquals(JsonToken.FIELD_NAME,  parser.nextToken());
     }
+
+    @Test
+    public void testStartObjectTokenWithBigName() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        CBORGenerator generator = cborGenerator(out);
+        generator.writeStartObject(null, 1);
+        generator.writeStringField("ididididididididididididid", UUID.randomUUID().toString());
+        generator.close();
+        byte[] data = out.toByteArray();
+
+        NonBlockingByteArrayParser parser = new CBORFactory()
+                .createNonBlockingByteArrayParser();
+        parser.feedInput(data, 0, 1);
+        assertEquals(JsonToken.START_OBJECT,  parser.nextToken());
+        assertEquals("{", parser.getText());
+        parser.feedInput(data, 1, 42);
+        assertEquals(JsonToken.FIELD_NAME,  parser.nextToken());
+        assertEquals("ididididididididididididid",  parser.currentName());
+    }
+
+    @Test
+    public void testStartObjectTokenLengthIsFedOneByOne() throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        CBORGenerator generator = cborGenerator(out);
+        generator.writeStartObject(null, 1);
+        generator.writeStringField("idididididididididididid", UUID.randomUUID().toString());
+        generator.close();
+        byte[] data = out.toByteArray();
+
+        NonBlockingByteArrayParser parser = new CBORFactory()
+                .createNonBlockingByteArrayParser();
+        parser.feedInput(data, 0, 1);
+        assertEquals(JsonToken.START_OBJECT,  parser.nextToken());
+        assertEquals("{", parser.getText());
+        parser.feedInput(data, 1, 2);
+        assertEquals(JsonToken.NOT_AVAILABLE,  parser.nextToken());
+        parser.feedInput(data, 2, 90);
+        assertEquals(JsonToken.FIELD_NAME,  parser.nextToken());
+        assertEquals("idididididididididididid",  parser.currentName());
+    }
+
+
+    @Test
+    public void testCBORMapWithLongFieldNameByteByByte() throws IOException {
+        NonBlockingByteArrayParser parser = new CBORFactory()
+                .createNonBlockingByteArrayParser();
+
+        // Map(1)
+        byte[] mapStart = new byte[] { (byte) 0xA1 };
+        parser.feedInput(mapStart, 0, 1);
+        assertEquals(JsonToken.START_OBJECT, parser.nextToken());
+
+        // Text header - length 24 (0x78 0x18)
+        byte[] textHeader1 = new byte[] { (byte) 0x78 };
+        parser.feedInput(textHeader1, 0, 1);
+        assertEquals(JsonToken.NOT_AVAILABLE, parser.nextToken());
+
+        byte[] textHeader2 = new byte[] { (byte) 0x18 };
+        parser.feedInput(textHeader2, 0, 1);
+        assertEquals(JsonToken.NOT_AVAILABLE, parser.nextToken());
+
+        // Field name "idididididididididididid" - feeding one byte at a time
+        String fieldName = "idididididididididididid";
+        byte[] fieldBytes = fieldName.getBytes();
+        for (int i = 0; i < fieldBytes.length; i++) {
+            byte[] fieldByte = new byte[] { fieldBytes[i] };
+            parser.feedInput(fieldByte, 0, 1);
+            JsonToken expected = (i == fieldBytes.length - 1) ?
+                    JsonToken.FIELD_NAME : JsonToken.NOT_AVAILABLE;
+            assertEquals(expected, parser.nextToken());
+        }
+        assertEquals("idididididididididididid", parser.currentName());
+    }
+
+    @Test
+    public void testCBORMapWithshortFieldLESS23NameByteByByte() throws IOException {
+        NonBlockingByteArrayParser parser = new CBORFactory()
+                .createNonBlockingByteArrayParser();
+
+        // Map(1)
+        byte[] mapStart = new byte[] { (byte) 0xA1 };
+        parser.feedInput(mapStart, 0, 1);
+        assertEquals(JsonToken.START_OBJECT, parser.nextToken());
+
+        // Text header - length 10 (0x6A)
+        byte[] textHeader = new byte[] { (byte) 0x6A };
+        parser.feedInput(textHeader, 0, 1);
+        assertEquals(JsonToken.NOT_AVAILABLE, parser.nextToken());
+
+        String fieldName = "ididididid";
+        byte[] fieldBytes = fieldName.getBytes();
+        for (int i = 0; i < fieldBytes.length; i++) {
+            byte[] fieldByte = new byte[] { fieldBytes[i] };
+            parser.feedInput(fieldByte, 0, 1);
+            JsonToken expected = (i == fieldBytes.length - 1) ?
+                    JsonToken.FIELD_NAME : JsonToken.NOT_AVAILABLE;
+            assertEquals(expected, parser.nextToken());
+        }
+        assertEquals("ididididid", parser.currentName());
+    }
+
+    @Test
+    public void testCBORMapWithSingleCharFieldName() throws IOException {
+        NonBlockingByteArrayParser parser = new CBORFactory()
+                .createNonBlockingByteArrayParser();
+
+        // Map(1)
+        byte[] mapStart = new byte[] { (byte) 0xA1 };
+        parser.feedInput(mapStart, 0, 1);
+        assertEquals(JsonToken.START_OBJECT, parser.nextToken());
+
+        // Text header - length 1 (0x61)
+        byte[] textHeader = new byte[] { (byte) 0x61 };
+        parser.feedInput(textHeader, 0, 1);
+        assertEquals(JsonToken.NOT_AVAILABLE, parser.nextToken());
+
+        // Single character field name
+        byte[] fieldByte = new byte[] { (byte) 'x' };
+        parser.feedInput(fieldByte, 0, 1);
+        assertEquals(JsonToken.FIELD_NAME, parser.nextToken());
+        assertEquals("x", parser.currentName());
+    }
+
+    // empty name TODO:: fawzi check if needed
+//    @Test
+//    public void testCBORMapWithEmptyFieldName() throws IOException {
+//        NonBlockingByteArrayParser parser = new CBORFactory()
+//                .createNonBlockingByteArrayParser();
+//
+//        // Map(1)
+//        byte[] mapStart = new byte[] { (byte) 0xA1 };
+//        parser.feedInput(mapStart, 0, 1);
+//        assertEquals(JsonToken.START_OBJECT, parser.nextToken());
+//
+//        // Text header - length 0 (0x60)
+//        byte[] textHeader = new byte[] { (byte) 0x60 };
+//        parser.feedInput(textHeader, 0, 1);
+//        assertEquals(JsonToken.FIELD_NAME, parser.nextToken());
+//        assertEquals("", parser.currentName());
+//    }
+
+    @Test
+    public void testCBORMapWith23ByteFieldName() throws IOException {
+        NonBlockingByteArrayParser parser = new CBORFactory()
+                .createNonBlockingByteArrayParser();
+
+        // Map(1)
+        byte[] mapStart = new byte[] { (byte) 0xA1 };
+        parser.feedInput(mapStart, 0, 1);
+        assertEquals(JsonToken.START_OBJECT, parser.nextToken());
+
+        // Text header - length 23 (0x77)
+        byte[] textHeader = new byte[] { (byte) 0x77 };
+        parser.feedInput(textHeader, 0, 1);
+        assertEquals(JsonToken.NOT_AVAILABLE, parser.nextToken());
+
+        // 23-byte field name
+        String fieldName = "abcdefghijklmnopqrstuvw";
+        byte[] fieldBytes = fieldName.getBytes();
+        for (int i = 0; i < fieldBytes.length; i++) {
+            byte[] fieldByte = new byte[] { fieldBytes[i] };
+            parser.feedInput(fieldByte, 0, 1);
+            JsonToken expected = (i == fieldBytes.length - 1) ?
+                    JsonToken.FIELD_NAME : JsonToken.NOT_AVAILABLE;
+            assertEquals(expected, parser.nextToken());
+        }
+        assertEquals(fieldName, parser.currentName());
+    }
+
+    @Test
+    public void testCBORMapWith25ByteFieldName() throws IOException {
+        NonBlockingByteArrayParser parser = new CBORFactory()
+                .createNonBlockingByteArrayParser();
+
+        // Map(1)
+        byte[] mapStart = new byte[] { (byte) 0xA1 };
+        parser.feedInput(mapStart, 0, 1);
+        assertEquals(JsonToken.START_OBJECT, parser.nextToken());
+
+        // Text string length in next byte (type 3 with additional info 24)
+        byte[] textHeader1 = new byte[] { (byte) 0x78 };
+        parser.feedInput(textHeader1, 0, 1);
+        assertEquals(JsonToken.NOT_AVAILABLE, parser.nextToken());
+
+        // Length = 25
+        byte[] textHeader2 = new byte[] { (byte) 25 };
+        parser.feedInput(textHeader2, 0, 1);
+        assertEquals(JsonToken.NOT_AVAILABLE, parser.nextToken());
+
+        // 25-byte field name
+        String fieldName = "abcdefghijklmnopqrstuvwxy";
+        byte[] fieldBytes = fieldName.getBytes(StandardCharsets.UTF_8);
+        assert fieldBytes.length == 25;
+        parser.feedInput(fieldBytes, 0, fieldBytes.length);
+        assertEquals(JsonToken.FIELD_NAME, parser.nextToken());
+        assertEquals(fieldName, parser.currentName());
+
+        // Null value
+        byte[] nullValue = new byte[] { (byte) 0xF6 };
+        parser.feedInput(nullValue, 0, 1);
+        assertEquals(JsonToken.VALUE_NULL, parser.nextToken());
+
+        assertEquals(JsonToken.END_OBJECT, parser.nextToken());
+        assertNull(parser.nextToken());
+    }
+
+
+    @Test
+    public void testCBORMapWithSpecialCharactersFieldName() throws IOException {
+        NonBlockingByteArrayParser parser = new CBORFactory()
+                .createNonBlockingByteArrayParser();
+
+        // Map(1)
+        byte[] mapStart = new byte[] { (byte) 0xA1 };
+        parser.feedInput(mapStart, 0, 1);
+        assertEquals(JsonToken.START_OBJECT, parser.nextToken());
+
+        // Text header - length 5 (0x65)
+        byte[] textHeader = new byte[] { (byte) 0x65 };
+        parser.feedInput(textHeader, 0, 1);
+        assertEquals(JsonToken.NOT_AVAILABLE, parser.nextToken());
+
+        // Field name with special characters
+        String fieldName = "$@#_!";
+        byte[] fieldBytes = fieldName.getBytes();
+        for (int i = 0; i < fieldBytes.length; i++) {
+            byte[] fieldByte = new byte[] { fieldBytes[i] };
+            parser.feedInput(fieldByte, 0, 1);
+            JsonToken expected = (i == fieldBytes.length - 1) ?
+                    JsonToken.FIELD_NAME : JsonToken.NOT_AVAILABLE;
+            assertEquals(expected, parser.nextToken());
+        }
+        assertEquals(fieldName, parser.currentName());
+    }
+
+
+
 }

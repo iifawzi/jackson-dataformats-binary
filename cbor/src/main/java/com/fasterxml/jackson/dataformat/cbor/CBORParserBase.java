@@ -7,6 +7,7 @@ import com.fasterxml.jackson.core.base.ParserMinimalBase;
 import com.fasterxml.jackson.core.io.ContentReference;
 import com.fasterxml.jackson.core.io.IOContext;
 import com.fasterxml.jackson.core.json.JsonReadContext;
+import com.fasterxml.jackson.core.util.TextBuffer;
 
 import java.io.IOException;
 import java.math.BigDecimal;

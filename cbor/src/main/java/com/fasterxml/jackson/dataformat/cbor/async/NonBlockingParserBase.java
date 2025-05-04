@@ -8,6 +8,7 @@ import com.fasterxml.jackson.core.ObjectCodec;
 import com.fasterxml.jackson.core.Version;
 import com.fasterxml.jackson.core.io.IOContext;
 import com.fasterxml.jackson.dataformat.cbor.CBORParserBase;
+import com.fasterxml.jackson.dataformat.cbor.CBORReadContext;
 
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -30,6 +31,7 @@ public abstract class NonBlockingParserBase extends CBORParserBase {
     protected final static int MAJOR_NEGATIVE_INT_ELEMENT = 2;
     protected final static int MAJOR_ARRAY_ELEMENT = 5;
     protected final static int MAJOR_OBJECT_ELEMENT = 6;
+    protected final static int MAJOR_FIELD_ELEMENT = 7;
 
     /**
      * State after non-blocking input source has indicated that no more input
@@ -41,7 +43,7 @@ public abstract class NonBlockingParserBase extends CBORParserBase {
     protected final static int MINOR_PENDING_BYTES = 1;
     protected final static int MINOR_PENDING_BYTES_UNSIGNED = 3;
     protected final static int MINOR_PENDING_BYTES_NEGATIVE = 4;
-    protected final static int MINOR_PENDING_ARRAY_LENGTH = 2;
+    protected final static int MINOR_FIELD_NAME_PENDING = 5;
 
     /*
     /**********************************************************************
@@ -113,9 +115,18 @@ public abstract class NonBlockingParserBase extends CBORParserBase {
         return null;
     }
 
+    @Deprecated // since 2.17
     @Override
-    public String getCurrentName() throws IOException {
-        return "";
+    public String getCurrentName() throws IOException { return currentName(); }
+
+    @Override // since 2.17
+    public String currentName() throws IOException
+    {
+        if (_currToken == JsonToken.START_OBJECT) {
+            CBORReadContext parent = _streamReadContext.getParent();
+            return parent.getCurrentName();
+        }
+        return _streamReadContext.getCurrentName();
     }
 
     @Override

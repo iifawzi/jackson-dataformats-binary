@@ -8,10 +8,24 @@ import com.fasterxml.jackson.core.async.ByteArrayFeeder;
 import com.fasterxml.jackson.core.async.NonBlockingInputFeeder;
 import com.fasterxml.jackson.core.exc.StreamConstraintsException;
 import com.fasterxml.jackson.core.io.IOContext;
+import com.fasterxml.jackson.core.util.TextBuffer;
+import com.fasterxml.jackson.dataformat.cbor.CBORConstants;
 
 import java.io.IOException;
 
 public class NonBlockingByteArrayParser extends NonBlockingParserBase implements ByteArrayFeeder {
+
+    /**
+     * Buffer that contains contents of String values, including
+     * field names if necessary (name split across boundary,
+     * contains escape sequence, or access needed to char array)
+     */
+    protected final TextBuffer _textBuffer;
+    private final static int[] UTF8_UNIT_CODES = CBORConstants.sUtf8UnitLengths;
+
+
+    protected int _pendingFieldNameBytesLength = 0;
+
 
     /*
     /**********************************************************************
@@ -40,6 +54,7 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
 
     public NonBlockingByteArrayParser(IOContext ioContext) {
         super(ioContext);
+        _textBuffer = ioContext.constructReadConstrainedTextBuffer();
     }
 
     /*
@@ -112,9 +127,20 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
     @Override
     public JsonToken nextToken() throws IOException {
 
-        if (!_streamReadContext.expectMoreValues() && _pendingBytesLength == 0) {
-            _streamReadContext = _streamReadContext.getParent();
-            return _updateToken(JsonToken.END_ARRAY);
+        if (_streamReadContext.inObject()) {
+            if (_currToken != JsonToken.FIELD_NAME && _majorState != MAJOR_FIELD_ELEMENT) {
+                if (!_streamReadContext.expectMoreValues()) {
+                    _streamReadContext = _streamReadContext.getParent();
+                    return _updateToken(JsonToken.END_OBJECT);
+                }
+                return _updateToken(_decodePropertyName());
+            }
+        } else {
+            // array
+            if (!_streamReadContext.expectMoreValues() && _pendingBytesLength == 0) {
+                _streamReadContext = _streamReadContext.getParent();
+                return _updateToken(JsonToken.END_ARRAY);
+            }
         }
 
         // TODO:: check testSharedNames in smile.
@@ -181,20 +207,18 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
      */
     protected final JsonToken _finishToken() throws IOException {
         switch (_minorState) {
-            case MINOR_PENDING_ARRAY_LENGTH:
-                _finishMajorTypeLength();
-                // we're done with pending bytes length. we know the value now.
-                if (_pendingBytesLength == 0) {
-                    createChildArrayContext(_pending32);
-                    return _updateToken(JsonToken.START_ARRAY);
-                }
-
             case MINOR_PENDING_BYTES:
                 return _completePendingBytes();
             case MINOR_PENDING_BYTES_UNSIGNED:
                 return _completePendingUnsigned();
             case MINOR_PENDING_BYTES_NEGATIVE:
                 return _completePendingUnsigned();
+            case MINOR_FIELD_NAME_PENDING:
+                boolean completed = _finishPropertyName(_inputCopyLen);
+                if (completed) {
+                    _majorState = MAJOR_OBJECT_ELEMENT;
+                    return _updateToken(JsonToken.FIELD_NAME);
+                }
 
         }
         return JsonToken.NOT_AVAILABLE;
@@ -301,7 +325,7 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
             _pending32 = (_pending32 << 8) | (_inputBuffer[_inputPtr++] & 0xFF);
             _pendingBytesLength--;
         }
-        _minorState = MINOR_PENDING_ARRAY_LENGTH;
+        _minorState = MINOR_PENDING_BYTES;
     }
 
     private void _finishUnsignedInteger() {
@@ -323,7 +347,6 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
         // shift current left, and add new byte.
         // minus 1 from input because we moved forward already, we want to add the current token.
 
-        // TODO:: FAWZI HANDLE ALL INPUT WHEN FED AT ONCE, CHECK SMILE AS WELL
 
         // Not all input available, copy one byte at a time
         while (_inputPtr < _inputEnd && _pendingBytesLength != 0) {
@@ -338,13 +361,23 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
         }
 
         // all remaining bits are available, so we can decode the length/value
-        // and complete a major type
+        // and complete a major type length. but for example for major field element we're not sure if we have remaining bytes for the actual name.
         if (_majorState == MAJOR_ARRAY_ELEMENT) {
             createChildArrayContext(_pending32);
             return _updateToken(JsonToken.START_ARRAY);
         } else if (_majorState == MAJOR_OBJECT_ELEMENT) {
             createChildObjectContext(_pending32);
             return _updateToken(JsonToken.START_OBJECT);
+        } else if (_majorState == MAJOR_FIELD_ELEMENT) {
+            if (_pending32 > _inputEnd - _inputPtr) {
+                _minorState = MINOR_FIELD_NAME_PENDING;
+                _pendingFieldNameBytesLength = _pending32;
+                return JsonToken.NOT_AVAILABLE;
+            } else {
+                _streamReadContext.setCurrentName(_decodeContiguousName(_pending32, _inputBuffer, _inputPtr));
+                return _updateToken(JsonToken.FIELD_NAME);
+            }
+
         }
         return _updateToken(JsonToken.NOT_AVAILABLE);
     }
@@ -490,5 +523,206 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
             }
         }
     }
+
+
+    protected final JsonToken _decodePropertyName() throws IOException
+    {
+        _majorState = MAJOR_FIELD_ELEMENT;
+        int ch = _inputBuffer[_inputPtr++] & 0xFF;
+        int type = (ch >> 5);
+        int lowBits = ch & 0x1F;
+
+        String name = null;
+        // name consists of less than 23 byte.
+        if (lowBits <= 23) {
+            if (lowBits > (_inputEnd - _inputPtr)) {
+                _pendingFieldNameBytesLength = lowBits;
+               _finishPropertyName(0);
+                // because we already increased the index by one when we did the check of expect more values
+                // and while the field name isn't finished in this token, we need to decrease the index again as this's not counted as field.
+                _streamReadContext.decreaseIndex(1);
+                return JsonToken.NOT_AVAILABLE;
+            }
+                // we have all the bytes.
+                name = _decodeContiguousName(lowBits, _inputBuffer, _inputPtr);
+        } else {
+            // because we already increased the index by one when we did the check of expect more values
+            // and while the field name isn't finished in this token, we need to decrease the index again as this's not counted as field.
+            _streamReadContext.decreaseIndex(1);
+
+            // we need to read more bytes to know the length of the field name.
+            int lengthInidcator = lowBits - 24;
+            if (lengthInidcator > 3) {
+                throw _constructError(String.format(
+                        "Invalid 5-bit length indicator for `JsonToken.%s`: 0x%02X; only 0x00-0x17, 0x1F allowed",
+                        currentToken(), lowBits));
+            }
+
+            _pendingBytesLength = (int) Math.pow(2, lengthInidcator);
+
+            // we don't have all the bytes needed to read the length, but let's try to read existing bytes, if any'
+            int neededInputEnd = _inputPtr + _pendingBytesLength;
+            if (neededInputEnd > _inputEnd) {
+                _finishMajorTypeLength();
+                return JsonToken.NOT_AVAILABLE;
+            }
+
+            if (lowBits > (_inputEnd - _inputPtr)) {
+                _finishPropertyName(0);
+                return JsonToken.NOT_AVAILABLE;
+            }
+
+            // we have all the bytes needed to read the length, so we can decode it.
+            int value = 0;
+            while (_inputPtr < _inputEnd && _pendingBytesLength != 0) {
+                value = (value << 8) | (_inputBuffer[_inputPtr++] & 0xFF);
+                _pendingBytesLength--;
+            }
+
+            // now we know the length of the field name, let's assume we have enough bytes to read it.
+            name = _decodeContiguousName(value, _inputBuffer, _inputPtr);
+        }
+        _streamReadContext.setCurrentName(name);
+        return JsonToken.FIELD_NAME;
+    }
+
+    private final String _decodeContiguousName(final int len,  byte[] inBuf, int _inputPtr) throws IOException
+    {
+        // note: caller ensures we have enough bytes available
+        int outPtr = 0;
+        char[] outBuf = _textBuffer.emptyAndGetCurrentSegment();
+        if (outBuf.length < len) { // one minor complication
+            outBuf = _textBuffer.expandCurrentSegment(len);
+        }
+        int inPtr = _inputPtr;
+        final int[] codes = UTF8_UNIT_CODES;
+
+        // First a tight loop for ASCII
+        final int end = inPtr + len;
+        while (true) {
+            int i = inBuf[inPtr] & 0xFF;
+            int code = codes[i];
+            if (code != 0) {
+                break;
+            }
+            outBuf[outPtr++] = (char) i;
+            if (++inPtr == end) {
+                return _textBuffer.setCurrentAndReturn(outPtr);
+            }
+        }
+
+        // But in case there's multi-byte char, use a full loop
+        while (inPtr < end) {
+            int i = inBuf[inPtr++] & 0xFF;
+            int code = codes[i];
+            if (code != 0) {
+                // 05-Jul-2021, tatu: As per [dataformats-binary#289] need to
+                //     be careful wrt end-of-buffer truncated codepoints
+                if ((inPtr + code) > end) {
+                    final int firstCharOffset = len - (end - inPtr) - 1;
+                    _reportTruncatedUTF8InName(len, firstCharOffset, i, code);
+                }
+
+                switch (code) {
+                    case 1:
+                    {
+                        final int c2 = inBuf[inPtr++];
+                        if ((c2 & 0xC0) != 0x080) {
+                            _reportInvalidOther(c2 & 0xFF, inPtr);
+                        }
+                        i = ((i & 0x1F) << 6) | (c2 & 0x3F);
+                    }
+                    break;
+                    case 2:
+                    {
+                        final int c2 = inBuf[inPtr++];
+                        if ((c2 & 0xC0) != 0x080) {
+                            _reportInvalidOther(c2 & 0xFF, inPtr);
+                        }
+                        final int c3 = inBuf[inPtr++];
+                        if ((c3 & 0xC0) != 0x080) {
+                            _reportInvalidOther(c3 & 0xFF, inPtr);
+                        }
+                        i = ((i & 0x0F) << 12) | ((c2 & 0x3F) << 6) | (c3 & 0x3F);
+                    }
+                    break;
+                    case 3:
+                        // 30-Jan-2021, tatu: TODO - validate surrogate case too?
+                        i = ((i & 0x07) << 18)
+                                | ((inBuf[inPtr++] & 0x3F) << 12)
+                                | ((inBuf[inPtr++] & 0x3F) << 6)
+                                | (inBuf[inPtr++] & 0x3F);
+                        // note: this is the codepoint value; need to split, too
+                        i -= 0x10000;
+                        outBuf[outPtr++] = (char) (0xD800 | (i >> 10));
+                        i = 0xDC00 | (i & 0x3FF);
+                        break;
+                    default: // invalid
+                        throw _constructReadException("Invalid UTF-8 byte 0x%s in Object property name",
+                                Integer.toHexString(i));
+                }
+            }
+            outBuf[outPtr++] = (char) i;
+        }
+        return _textBuffer.setCurrentAndReturn(outPtr);
+    }
+
+    // @since 2.18.1
+    private String _reportTruncatedUTF8InString(int strLenBytes, int truncatedCharOffset,
+                                                int firstUTFByteValue, int bytesExpected)
+            throws IOException
+    {
+        throw _constructError(String.format(
+                "Truncated UTF-8 character in Unicode String value (%d bytes): "
+                        +"byte 0x%02X at offset #%d indicated %d more bytes needed",
+                strLenBytes, firstUTFByteValue, truncatedCharOffset, bytesExpected));
+    }
+
+    // @since 2.13
+    private String _reportTruncatedUTF8InName(int strLenBytes, int truncatedCharOffset,
+                                              int firstUTFByteValue, int bytesExpected)
+            throws IOException
+    {
+        throw _constructReadException(String.format(
+                "Truncated UTF-8 character in Map key (%d bytes): "
+                        +"byte 0x%02X at offset #%d indicated %d more bytes needed",
+                strLenBytes, firstUTFByteValue, truncatedCharOffset, bytesExpected));
+    }
+
+
+
+    protected void _reportInvalidOther(int mask) throws JsonParseException {
+        _reportError("Invalid UTF-8 middle byte 0x"+Integer.toHexString(mask));
+    }
+
+    protected void _reportInvalidOther(int mask, int ptr) throws JsonParseException {
+        _inputPtr = ptr;
+        _reportInvalidOther(mask);
+    }
+
+
+    protected boolean _finishPropertyName(int readBytes) throws IOException {
+        byte[] srcBuffer = _inputBuffer;
+        byte[] copyBuffer = _inputCopy;
+        int srcPtr = _inputPtr;
+
+        while (srcPtr < _inputEnd) {
+          copyBuffer[readBytes++] = srcBuffer[srcPtr++];
+        }
+
+        if (readBytes == _pendingFieldNameBytesLength) {
+            _streamReadContext.setCurrentName(_decodeContiguousName(readBytes, copyBuffer, 0));
+            _inputPtr = _inputPtr + readBytes;
+            return true;
+        }
+
+        if (srcPtr == _inputEnd) {
+            _inputPtr = srcPtr;
+            _inputCopyLen = readBytes;
+            _minorState = MINOR_FIELD_NAME_PENDING;
+        }
+        return false;
+    }
+
 
 }
