@@ -192,6 +192,35 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
                 return _startArrayElement(lowBits);
             case 5:
                 return _startObjectElement(lowBits);
+            case 7:
+                switch (lowBits) {
+                    case 20:
+                        _majorState = MAJOR_OBJECT_ELEMENT;
+                        return _updateToken(JsonToken.VALUE_FALSE);
+                    case 21:
+                        _majorState = MAJOR_OBJECT_ELEMENT;
+                        return _updateToken(JsonToken.VALUE_TRUE);
+                    case 22:
+                        _majorState = MAJOR_OBJECT_ELEMENT;
+                        return _updateToken(JsonToken.VALUE_NULL);
+                    case 23:
+                        _majorState = MAJOR_OBJECT_ELEMENT;
+                        return _updateToken(_decodeUndefinedValue());
+                    case 25:
+                        // TODO:: Implement
+                        return _updateToken(JsonToken.NOT_AVAILABLE);
+                    case 26:
+                        // TODO:: Implement
+                        return _updateToken(JsonToken.NOT_AVAILABLE);
+                    case 27:
+                        // TODO:: Implement
+                        return _updateToken(JsonToken.NOT_AVAILABLE);
+                    case 31:
+                        // TODO:: Implement
+                        return _updateToken(JsonToken.NOT_AVAILABLE);
+                }
+                _majorState = MAJOR_OBJECT_ELEMENT;
+                return _updateToken(_decodeSimpleValue(lowBits, ch));
         }
         return _updateToken(JsonToken.NOT_AVAILABLE);
     }
@@ -219,6 +248,16 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
                     _majorState = MAJOR_OBJECT_ELEMENT;
                     return _updateToken(JsonToken.FIELD_NAME);
                 }
+                break;
+            case MINOR_PENDING_BYTES_MAJOR7:
+                _numberInt = _inputBuffer[_inputPtr++] & 0xFF;
+                if (_numberInt < 32) {
+                    throw _constructError("Invalid second byte for simple value: 0x"
+                            +Integer.toHexString(_numberInt)+" (only values 0x20 - 0xFF allowed)");
+                }
+                _numTypesValid = NR_INT;
+                _majorState = MAJOR_OBJECT_ELEMENT;
+                return (JsonToken.VALUE_NUMBER_INT);
 
         }
         return JsonToken.NOT_AVAILABLE;
@@ -352,7 +391,7 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
         while (_inputPtr < _inputEnd && _pendingBytesLength != 0) {
             _pending32 = (_pending32 << 8) | (_inputBuffer[_inputPtr++] & 0xFF);
             _pendingBytesLength--;
-            _streamReadContext.decreaseIndex(1);
+//            _streamReadContext.decreaseIndex(1);
         }
 
 
@@ -548,7 +587,7 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
         } else {
             // because we already increased the index by one when we did the check of expect more values
             // and while the field name isn't finished in this token, we need to decrease the index again as this's not counted as field.
-            _streamReadContext.decreaseIndex(1);
+//            _streamReadContext.decreaseIndex(1);
 
             // we need to read more bytes to know the length of the field name.
             int lengthInidcator = lowBits - 24;
@@ -723,6 +762,45 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
             _minorState = MINOR_FIELD_NAME_PENDING;
         }
         return false;
+    }
+
+    public JsonToken _decodeSimpleValue(int lowBits, int ch) throws IOException {
+        if (lowBits > 24) {
+            _invalidToken(ch);
+        }
+        if (lowBits < 24) {
+            _numberInt = lowBits;
+        } else { // need another byte
+
+            if (_inputPtr >= _inputEnd) {
+                _minorState = MINOR_PENDING_BYTES_MAJOR7;
+                return JsonToken.NOT_AVAILABLE;
+            }
+             // but we have it already.
+            _numberInt = _inputBuffer[_inputPtr++] & 0xFF;
+            // As per CBOR spec, values below 32 not allowed to avoid
+            // confusion (as well as guarantee uniqueness of encoding)
+            if (_numberInt < 32) {
+                throw _constructError("Invalid second byte for simple value: 0x"
+                        +Integer.toHexString(_numberInt)+" (only values 0x20 - 0xFF allowed)");
+            }
+        }
+
+        // 25-Nov-2020, tatu: Although ideally we should report these
+        //    as `JsonToken.VALUE_EMBEDDED_OBJECT`, due to late addition
+        //    of handling in 2.12, simple value in 2.12 will be reported
+        //    as simple ints.
+
+        _numTypesValid = NR_INT;
+        return (JsonToken.VALUE_NUMBER_INT);
+    }
+
+    protected void _invalidToken(int ch) throws JsonParseException {
+        ch &= 0xFF;
+        if (ch == 0xFF) {
+            throw _constructError("Mismatched BREAK byte (0xFF): encountered where value expected");
+        }
+        throw _constructError("Invalid CBOR value token (first byte): 0x"+Integer.toHexString(ch));
     }
 
 

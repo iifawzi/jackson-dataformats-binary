@@ -1734,8 +1734,10 @@ public class BasicParserTest extends CBORTestBase
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         CBORGenerator generator = cborGenerator(out);
 
-        generator.writeStartObject(null, 1);
+        generator.writeStartObject(null, 3);
         generator.writeNumberField("id", 1);
+        generator.writeBooleanField("test", true);
+        generator.writeBooleanField("test2", false);
         generator.writeEndObject();
         generator.close();
 
@@ -1756,6 +1758,19 @@ public class BasicParserTest extends CBORTestBase
         parser.feedInput(data, 4, 5);
         assertEquals(JsonToken.VALUE_NUMBER_INT, parser.nextToken());
         assertEquals(1, parser.getIntValue());
+
+        // boolean true - first field name byte then 4 bytes for the name then the value
+        parser.feedInput(data, 5, 11);
+        assertEquals(JsonToken.FIELD_NAME, parser.nextToken());
+        assertEquals("test", parser.currentName());
+        assertEquals(JsonToken.VALUE_TRUE, parser.nextToken());
+        assertEquals(true, parser.getBooleanValue());
+
+        parser.feedInput(data, 11, 100);
+        assertEquals(JsonToken.FIELD_NAME, parser.nextToken());
+        assertEquals("test2", parser.currentName());
+        assertEquals(JsonToken.VALUE_FALSE, parser.nextToken());
+        assertEquals(false, parser.getBooleanValue());
 
         assertEquals(JsonToken.END_OBJECT, parser.nextToken());
     }
@@ -1973,6 +1988,48 @@ public class BasicParserTest extends CBORTestBase
         assertNull(parser.nextToken());
     }
 
+    @Test
+    public void testMajorType7Values() throws IOException {
+        // true = 0b11110101 (0xF5)
+        byte[] trueValue = {(byte)0b11110101};
+        NonBlockingByteArrayParser parser = new CBORFactory().createNonBlockingByteArrayParser();
+        parser.feedInput(trueValue, 0, 1);
+        assertEquals(JsonToken.VALUE_TRUE, parser.nextToken());
+        assertNull(parser.nextToken());
 
+        // false = 0b11110100 (0xF4)
+        byte[] falseValue = {(byte)0b11110100};
+        parser = new CBORFactory().createNonBlockingByteArrayParser();
+        parser.feedInput(falseValue, 0, 1);
+        assertEquals(JsonToken.VALUE_FALSE, parser.nextToken());
+        assertNull(parser.nextToken());
 
+        // null = 0b11110110 (0xF6)
+        byte[] nullValue = {(byte)0b11110110};
+        parser = new CBORFactory().createNonBlockingByteArrayParser();
+        parser.feedInput(nullValue, 0, 1);
+        assertEquals(JsonToken.VALUE_NULL, parser.nextToken());
+        assertNull(parser.nextToken());
+
+        // undefined = 0b11110111 (0xF7)
+        byte[] undefValue = {(byte)0b11110111};
+        parser = new CBORFactory().createNonBlockingByteArrayParser();
+        parser.feedInput(undefValue, 0, 1);
+        assertEquals(JsonToken.VALUE_NULL, parser.nextToken());  // typically mapped to null in JSON
+        assertNull(parser.nextToken());
+
+        // simple(16) = 0b11110000 (0xF0)
+        byte[] simple16 = {(byte)0b11110000};
+        parser = new CBORFactory().createNonBlockingByteArrayParser();
+        parser.feedInput(simple16, 0, 1);
+        assertEquals(JsonToken.VALUE_NUMBER_INT, parser.nextToken());
+
+        // simple(100) = 0b11111000 0b01100100 (0xF8 0x64)
+        // First byte: 0b11111000 = major type 7 (0b111) with additional info 24 (0b11000)
+        // Second byte: 0b01100100 = 100 decimal
+        byte[] simple100 = {(byte)0b11111000, (byte)0b01100100};
+        parser = new CBORFactory().createNonBlockingByteArrayParser();
+        parser.feedInput(simple100, 0, 2);
+        assertEquals(JsonToken.VALUE_NUMBER_INT, parser.nextToken());
+    }
 }

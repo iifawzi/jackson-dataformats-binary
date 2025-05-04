@@ -43,6 +43,7 @@ public abstract class NonBlockingParserBase extends CBORParserBase {
     protected final static int MINOR_PENDING_BYTES = 1;
     protected final static int MINOR_PENDING_BYTES_UNSIGNED = 3;
     protected final static int MINOR_PENDING_BYTES_NEGATIVE = 4;
+    protected final static int MINOR_PENDING_BYTES_MAJOR7 = 89;
     protected final static int MINOR_FIELD_NAME_PENDING = 5;
 
     /*
@@ -251,6 +252,10 @@ public abstract class NonBlockingParserBase extends CBORParserBase {
     @Override
     public byte[] getBinaryValue(Base64Variant base64Variant) throws IOException {
         return new byte[0];
+    }
+
+    protected JsonToken _decodeUndefinedValue() throws IOException {
+        return JsonToken.VALUE_NULL;
     }
 
        /*
