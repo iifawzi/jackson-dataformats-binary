@@ -25,21 +25,10 @@ public abstract class NonBlockingParserBase extends CBORParserBase {
      */
 
     /**
-     * State right after the parser has been constructed, before seeing the first byte
-     * to know if there's a header.
-     */
-    protected final static int MAJOR_INITIAL = 0;
-
-    /**
-     * State right after parser a root value has been
+     * State right after a parser has been constructed or a root value has been
      * finished, but the next token has not yet been recognized.
      */
-    protected final static int MAJOR_ROOT = 1;
-
-    protected final static int MAJOR_OBJECT_FIELD = 2;
-    protected final static int MAJOR_OBJECT_VALUE = 3;
-
-    protected final static int MAJOR_ARRAY_ELEMENT = 4;
+    protected final static int MAJOR_ROOT = 0;
 
     /**
      * State after a non-blocking input source has indicated that no more input
@@ -47,16 +36,14 @@ public abstract class NonBlockingParserBase extends CBORParserBase {
      */
     protected final static int MAJOR_CLOSED = 5;
 
+    // // // "Sub-states"
+    protected final static int MINOR_VALUE_UNSIGNED_INT = 1;
+
     /*
     /**********************************************************************
     /* Input source config
     /**********************************************************************
      */
-
-    /**
-     * This buffer is actually provided via {@link NonBlockingInputFeeder}
-     */
-    protected byte[] _inputBuffer = NO_BYTES;
 
     /**
      * In addition to the current buffer pointer and end pointer,
@@ -79,9 +66,9 @@ public abstract class NonBlockingParserBase extends CBORParserBase {
     protected byte[] _inputCopy;
 
     /**
-     * Number of bytes buffered in <code>_inputCopy</code>
+     * Number of bytes needed to finish decoding a major type
      */
-    protected int _inputCopyLen;
+    protected int _pendingBytesLen;
 
     /**
      * Temporary storage for 32-bit values (int, float), as well as length markers
@@ -133,9 +120,9 @@ public abstract class NonBlockingParserBase extends CBORParserBase {
         super(ctxt, parserFeatures, cborFeatures);
         // We don't need a lot; for most things maximum known a-priori length below 70 bytes
         _inputCopy = ctxt.allocReadIOBuffer(500);
-
         _updateTokenToNull();
-        _majorState = MAJOR_INITIAL;
+        _majorState = MAJOR_ROOT;
+        _majorStateAfterValue = MAJOR_ROOT;
     }
 
     @Override
@@ -225,6 +212,12 @@ public abstract class NonBlockingParserBase extends CBORParserBase {
         }
     }
 
+    protected final JsonToken _valueComplete(JsonToken t) throws IOException
+    {
+        _majorState = _majorStateAfterValue;
+        return _updateToken(t);
+    }
+
     @Override
     public String getCurrentName() throws IOException {
         return "";
@@ -234,16 +227,6 @@ public abstract class NonBlockingParserBase extends CBORParserBase {
     @Override
     public Version version() {
         return null;
-    }
-
-    @Override
-    public void close() throws IOException {
-
-    }
-
-    @Override
-    public boolean isClosed() {
-        return false;
     }
 
     @Override
@@ -279,21 +262,6 @@ public abstract class NonBlockingParserBase extends CBORParserBase {
     @Override
     public boolean hasTextCharacters() {
         return false;
-    }
-
-    @Override
-    public Number getNumberValue() throws IOException {
-        return null;
-    }
-
-    @Override
-    public NumberType getNumberType() throws IOException {
-        return null;
-    }
-
-    @Override
-    public int getIntValue() throws IOException {
-        return 0;
     }
 
     @Override

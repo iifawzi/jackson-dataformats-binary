@@ -8,25 +8,26 @@ import com.fasterxml.jackson.core.format.InputAccessor;
 import com.fasterxml.jackson.core.format.MatchStrength;
 import com.fasterxml.jackson.core.io.ContentReference;
 import com.fasterxml.jackson.core.io.IOContext;
+import com.fasterxml.jackson.core.sym.ByteQuadsCanonicalizer;
+import com.fasterxml.jackson.dataformat.cbor.async.NonBlockingByteArrayParser;
 
 /**
  * Factory used for constructing {@link CBORParser} and {@link CBORGenerator}
  * instances; both of which handle
  * <a href="https://www.rfc-editor.org/info/rfc7049">CBOR</a>
  * encoded data.
- *<p>
+ * <p>
  * Extends {@link JsonFactory} mostly so that users can actually use it in place
  * of regular non-CBOR factory instances.
- *<p>
+ * <p>
  * Note on using non-byte-based sources/targets (char based, like
  * {@link java.io.Reader} and {@link java.io.Writer}): these can not be
  * used for CBOR documents; attempt will throw exception.
  *
  * @author Tatu Saloranta
  */
-public class CBORFactory extends JsonFactory
-{
-	private static final long serialVersionUID = 1; // 2.6
+public class CBORFactory extends JsonFactory {
+    private static final long serialVersionUID = 1; // 2.6
 
     /*
     /**********************************************************
@@ -34,7 +35,7 @@ public class CBORFactory extends JsonFactory
     /**********************************************************
      */
 
-	/**
+    /**
      * Name used to identify CBOR format.
      * (and returned by {@link #getFormatName()}
      */
@@ -77,7 +78,9 @@ public class CBORFactory extends JsonFactory
      * and this reuse only works within context of a single
      * factory instance.
      */
-    public CBORFactory() { this((ObjectCodec) null); }
+    public CBORFactory() {
+        this((ObjectCodec) null);
+    }
 
     public CBORFactory(ObjectCodec oc) {
         super(oc);
@@ -91,8 +94,7 @@ public class CBORFactory extends JsonFactory
      *
      * @since 2.2.1
      */
-    public CBORFactory(CBORFactory src, ObjectCodec oc)
-    {
+    public CBORFactory(CBORFactory src, ObjectCodec oc) {
         super(src, oc);
         _formatParserFeatures = src._formatParserFeatures;
         _formatGeneratorFeatures = src._formatGeneratorFeatures;
@@ -123,11 +125,25 @@ public class CBORFactory extends JsonFactory
     }
 
     @Override
-    public CBORFactory copy()
-    {
+    public CBORFactory copy() {
         _checkInvalidCopy(CBORFactory.class);
         // note: as with base class, must NOT copy mapper reference
         return new CBORFactory(this, null);
+    }
+
+    /*
+    /**********************************************************
+    /* Experimental extended factory method(s) for creating
+    /* non-blocking parsers
+    /**********************************************************
+     */
+
+    @Override
+    public NonBlockingByteArrayParser createNonBlockingByteArrayParser() throws IOException {
+        IOContext ctxt = _createContext(null, false);
+        // 13-Mar-2021, tatu: [dataformats-binary#252] Leave async parser with
+        //   always-canonicalizing, for now (2.13) -- to be improved in future
+        return new NonBlockingByteArrayParser(ctxt, _parserFeatures, DEFAULT_CBOR_PARSER_FEATURE_FLAGS);
     }
 
     /*
@@ -172,7 +188,9 @@ public class CBORFactory extends JsonFactory
     // public boolean canUseSchema(FormatSchema schema) { }
 
     @Override
-    public boolean canUseCharArrays() { return false; }
+    public boolean canUseCharArrays() {
+        return false;
+    }
 
     @Override
     public MatchStrength hasFormat(InputAccessor acc) throws IOException {
@@ -210,8 +228,7 @@ public class CBORFactory extends JsonFactory
      * Method for enabling or disabling specified parser feature
      * (check {@link CBORParser.Feature} for list of features)
      */
-    public final CBORFactory configure(CBORParser.Feature f, boolean state)
-    {
+    public final CBORFactory configure(CBORParser.Feature f, boolean state) {
         if (state) {
             enable(f);
         } else {
@@ -352,7 +369,7 @@ public class CBORFactory extends JsonFactory
     /**
      * Method for constructing {@link JsonGenerator} for generating
      * CBOR-encoded output.
-     *<p>
+     * <p>
      * Since CBOR format always uses UTF-8 internally, <code>enc</code>
      * argument is ignored.
      */
@@ -367,7 +384,7 @@ public class CBORFactory extends JsonFactory
     /**
      * Method for constructing {@link JsonGenerator} for generating
      * CBOR-encoded output.
-     *<p>
+     * <p>
      * Since CBOR format always uses UTF-8 internally, no encoding need
      * to be passed to this method.
      */
@@ -395,8 +412,7 @@ public class CBORFactory extends JsonFactory
      * parser.
      */
     @Override
-    protected CBORParser _createParser(InputStream in, IOContext ctxt) throws IOException
-    {
+    protected CBORParser _createParser(InputStream in, IOContext ctxt) throws IOException {
         return new CBORParserBootstrapper(ctxt, in).constructParser(_factoryFeatures,
                 _parserFeatures, _formatParserFeatures,
                 _objectCodec, _byteSymbolCanonicalizer);
@@ -413,7 +429,7 @@ public class CBORFactory extends JsonFactory
 
     @Override
     protected JsonParser _createParser(char[] data, int offset, int len, IOContext ctxt,
-            boolean recyclable) throws IOException {
+                                       boolean recyclable) throws IOException {
         return _nonByteSource();
     }
 
@@ -422,8 +438,7 @@ public class CBORFactory extends JsonFactory
      * parser.
      */
     @Override
-    protected CBORParser _createParser(byte[] data, int offset, int len, IOContext ctxt) throws IOException
-    {
+    protected CBORParser _createParser(byte[] data, int offset, int len, IOContext ctxt) throws IOException {
         return new CBORParserBootstrapper(ctxt, data, offset, len).constructParser(
                 _factoryFeatures, _parserFeatures, _formatParserFeatures,
                 _objectCodec, _byteSymbolCanonicalizer);
@@ -446,8 +461,7 @@ public class CBORFactory extends JsonFactory
     }
 
     private final CBORGenerator _createCBORGenerator(IOContext ctxt,
-            int stdFeat, int formatFeat, ObjectCodec codec, OutputStream out) throws IOException
-    {
+                                                     int stdFeat, int formatFeat, ObjectCodec codec, OutputStream out) throws IOException {
         // false -> we won't manage the stream unless explicitly directed to
         CBORGenerator gen = new CBORGenerator(ctxt, stdFeat, formatFeat, _objectCodec, out);
         if (CBORGenerator.Feature.WRITE_TYPE_HEADER.enabledIn(formatFeat)) {
