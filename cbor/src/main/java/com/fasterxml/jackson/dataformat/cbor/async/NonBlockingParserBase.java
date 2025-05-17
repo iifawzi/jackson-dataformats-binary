@@ -8,13 +8,44 @@ import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.core.ObjectCodec;
 import com.fasterxml.jackson.core.Version;
 import com.fasterxml.jackson.core.async.NonBlockingInputFeeder;
+import com.fasterxml.jackson.core.io.IOContext;
 import com.fasterxml.jackson.dataformat.cbor.CBORParserBase;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 
 public abstract class NonBlockingParserBase extends CBORParserBase {
+
+    /*
+    /**********************************************************************
+    /* Major state constants
+    /**********************************************************************
+     */
+
+    /**
+     * State right after the parser has been constructed, before seeing the first byte
+     * to know if there's a header.
+     */
+    protected final static int MAJOR_INITIAL = 0;
+
+    /**
+     * State right after parser a root value has been
+     * finished, but the next token has not yet been recognized.
+     */
+    protected final static int MAJOR_ROOT = 1;
+
+    protected final static int MAJOR_OBJECT_FIELD = 2;
+    protected final static int MAJOR_OBJECT_VALUE = 3;
+
+    protected final static int MAJOR_ARRAY_ELEMENT = 4;
+
+    /**
+     * State after a non-blocking input source has indicated that no more input
+     * is forthcoming AND we have exhausted all the input
+     */
+    protected final static int MAJOR_CLOSED = 5;
 
     /*
     /**********************************************************************
@@ -34,6 +65,35 @@ public abstract class NonBlockingParserBase extends CBORParserBase {
      * information when the token has been completed.
      */
     protected int _origBufferLen;
+
+    /*
+    /**********************************************************************
+    /* Other buffering
+    /**********************************************************************
+     */
+
+    /**
+     * Temporary buffer for holding content if input not contiguous (but can
+     * fit in buffer)
+     */
+    protected byte[] _inputCopy;
+
+    /**
+     * Number of bytes buffered in <code>_inputCopy</code>
+     */
+    protected int _inputCopyLen;
+
+    /**
+     * Temporary storage for 32-bit values (int, float), as well as length markers
+     * for length-prefixed values.
+     */
+    protected int _pending32;
+
+    /**
+     * Temporary storage for 64-bit values (long, double), secondary storage
+     * for some other things (scale of BigDecimal values)
+     */
+    protected long _pending64;
 
 
     /*
@@ -63,20 +123,19 @@ public abstract class NonBlockingParserBase extends CBORParserBase {
      */
     protected boolean _endOfInput = false;
 
+    /*
+    /**********************************************************************
+    /* Life-cycle
+    /**********************************************************************
+    */
 
-    @Override
-    public JsonToken nextToken() throws IOException {
-        return null;
-    }
+    protected NonBlockingParserBase(IOContext ctxt, int parserFeatures, int cborFeatures) {
+        super(ctxt, parserFeatures, cborFeatures);
+        // We don't need a lot; for most things maximum known a-priori length below 70 bytes
+        _inputCopy = ctxt.allocReadIOBuffer(500);
 
-    @Override
-    protected void _handleEOF() throws JsonParseException {
-
-    }
-
-    @Override
-    public String getCurrentName() throws IOException {
-        return "";
+        _updateTokenToNull();
+        _majorState = MAJOR_INITIAL;
     }
 
     @Override
@@ -85,9 +144,92 @@ public abstract class NonBlockingParserBase extends CBORParserBase {
     }
 
     @Override
-    public void setCodec(ObjectCodec objectCodec) {
-
+    public void setCodec(ObjectCodec c) {
+        throw new UnsupportedOperationException("Can not use ObjectMapper with non-blocking parser");
     }
+
+    @Override
+    public boolean canParseAsync() {
+        return true;
+    }
+
+    /*
+    /**********************************************************
+    /* Abstract methods from JsonParser
+    /**********************************************************
+     */
+
+    @Override
+    public abstract int releaseBuffered(OutputStream out) throws IOException;
+
+    @Override
+    protected void _closeInput() {
+        // nothing to do here
+    }
+
+    /*
+    /**********************************************************************
+    /* Internal methods, state changes
+    /**********************************************************************
+     */
+
+    /**
+     * Helper method called at the point when all inputs have been exhausted, and
+     * the input feeder has indicated no more input will be forthcoming.
+     */
+    protected JsonToken _eofAsNextToken() throws IOException {
+        // NOTE: here we can and should close input, release buffers, since
+        // this is "hard" EOF, not a boundary imposed by header token.
+        _tagValues.clear();
+        close();
+
+        // 30-Jan-2021, tatu: But also MUST verify that end-of-content is actually
+        //   allowed (see [dataformats-binary#240] for example)
+        _handleEOF();
+        return _updateTokenToNull();
+    }
+
+    @Override
+    protected void _handleEOF() throws JsonParseException {
+        if (_streamReadContext.inRoot()) {
+            return;
+        }
+        // Ok; end-marker or fixed-length Array/Object?
+        final JsonLocation loc = _streamReadContext.startLocation(_ioContext.contentReference());
+        final String startLocDesc = (loc == null) ? "[N/A]" : loc.sourceDescription();
+        if (_streamReadContext.hasExpectedLength()) { // specific length
+            final int expMore = _streamReadContext.getRemainingExpectedLength();
+            if (_streamReadContext.inArray()) {
+                _reportInvalidEOF(String.format(
+                                " in Array value: expected %d more elements (start token at %s)",
+                                expMore, startLocDesc),
+                        null);
+            } else {
+                _reportInvalidEOF(String.format(
+                                " in Object value: expected %d more properties (start token at %s)",
+                                expMore, startLocDesc),
+                        null);
+            }
+        } else {
+            if (_streamReadContext.inArray()) {
+                _reportInvalidEOF(String.format(
+                                " in Array value: expected an element or close marker (0xFF) (start token at %s)",
+                                startLocDesc),
+                        null);
+            } else {
+                _reportInvalidEOF(String.format(
+                                " in Object value: expected a property or close marker (0xFF) (start token at %s)",
+                                startLocDesc),
+                        null);
+            }
+        }
+    }
+
+    @Override
+    public String getCurrentName() throws IOException {
+        return "";
+    }
+
 
     @Override
     public Version version() {
