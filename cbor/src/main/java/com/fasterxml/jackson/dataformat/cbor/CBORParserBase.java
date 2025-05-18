@@ -399,11 +399,11 @@ public abstract class CBORParserBase extends ParserMinimalBase {
         }
     }
 
-        /*
+    /*
     /**********************************************************
     /* Internal methods, other
     /**********************************************************
-     */
+    */
 
     private final static BigInteger BIT_63 = BigInteger.ONE.shiftLeft(63);
 

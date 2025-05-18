@@ -194,36 +194,36 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
     private void _numIsFinished() {
         if ((_numTypesValid & NR_LONG) != 0) {
             if (_pending64 < 0L) {
-                _numTypesValid = NR_BIGINT;
-                if (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) {
-                    _numberBigInt = BigInteger.ONE.negate().subtract(_bigPositive(_pending64));
-                } else {
-                    _numberBigInt = _bigPositive(_pending64);
-                }
+                _promoteToAndSetBigInteger();
                 return;
             }
-            if (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) {
-                _numberLong = -1 - _pending64;
-            } else {
-                _numberLong = _pending64;
-            }
+            _numberLong = (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) ? -1L - _pending64 : _pending64;
+            return;
+        }
+
+        if (_pending32 < 0) {
+            _promoteToAndSetLong();
+            return;
+        }
+        _numberInt = (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) ? -1 - _pending32 : _pending32;
+    }
+
+    private void _promoteToAndSetBigInteger() {
+        _numTypesValid = NR_BIGINT;
+        if (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) {
+            _numberBigInt = BigInteger.ONE.negate().subtract(_bigPositive(_pending64));
         } else {
-            if (_pending32 < 0) {
-                _numTypesValid = NR_LONG;
-                if (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) {
-                    _numberLong = -1 - (_pending32 & 0xFFFFFFFFL);
-                } else {
-                    _numberLong = _pending32 & 0xFFFFFFFFL;
-                }
-                return;
-            }
-            if (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) {
-                _numberInt = -1 - _pending32;
-            } else {
-                _numberInt = _pending32;
-            }
+            _numberBigInt = _bigPositive(_pending64);
         }
     }
+
+    private void _promoteToAndSetLong() {
+        _numTypesValid = NR_LONG;
+        long unsignedValue = _pending32 & 0xFFFFFFFFL;
+        _numberLong = (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) ?
+                -1L - unsignedValue : unsignedValue;
+    }
+
 
     private void _clearRetainedNumData() {
         _numberInt = 0;
