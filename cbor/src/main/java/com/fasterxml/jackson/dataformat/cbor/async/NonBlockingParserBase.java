@@ -7,7 +7,6 @@ import com.fasterxml.jackson.core.JsonStreamContext;
 import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.core.ObjectCodec;
 import com.fasterxml.jackson.core.Version;
-import com.fasterxml.jackson.core.async.NonBlockingInputFeeder;
 import com.fasterxml.jackson.core.io.IOContext;
 import com.fasterxml.jackson.dataformat.cbor.CBORParserBase;
 
@@ -109,6 +108,11 @@ public abstract class NonBlockingParserBase extends CBORParserBase {
      * be no more input to parse.
      */
     protected boolean _endOfInput = false;
+
+    /**
+     * Flag Indicating which majorType we're processing
+     */
+    protected int _majorType;
 
     /*
     /**********************************************************************

@@ -7,6 +7,7 @@ import com.fasterxml.jackson.dataformat.cbor.CBORConstants;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.math.BigInteger;
 
 public class NonBlockingByteArrayParser extends NonBlockingParserBase implements ByteArrayFeeder {
     /*
@@ -88,6 +89,7 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
             return _finishToken();
         }
 
+        _clearRetainedNumData();
         int ch = _inputBuffer[_inputPtr++] & 0xFF;
 
         switch (_majorState) {
@@ -106,7 +108,7 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
 
         switch (_minorState) {
             case MINOR_VALUE_UNSIGNED_INT:
-                return _finishUnsignedNumber();
+                return _finishNumber();
         }
         throw new IllegalStateException("Illegal state when trying to complete token: majorState=" + _majorState);
     }
@@ -127,7 +129,11 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
 
         switch (type) {
             case CBORConstants.MAJOR_TYPE_INT_POS:
-                return _startUnsignedNumber(lowBits);
+                _majorType = CBORConstants.MAJOR_TYPE_INT_POS;
+                return _startNumber(lowBits);
+            case CBORConstants.MAJOR_TYPE_INT_NEG:
+                _majorType = CBORConstants.MAJOR_TYPE_INT_NEG;
+                return _startNumber(lowBits);
         }
         // If we get this far, type byte is corrupt
         _reportError("Invalid type marker byte 0x%02x for expected value token", ch & 0xFF);
@@ -140,21 +146,25 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
     /**********************************************************************
     */
 
-    private JsonToken _startUnsignedNumber(int lowBits) throws IOException {
+    private JsonToken _startNumber(int lowBits) throws IOException {
         _pendingBytesLen = _decodeNeededBytes(lowBits);
         _setNumTypesValid();
 
         // common case first: have all we need
         if (lowBits <= 23) {
-            _numberInt = lowBits;
+            if (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) {
+                _numberInt = -1 - lowBits;
+            } else {
+                _numberInt = lowBits;
+            }
             _numTypesValid = NR_INT;
             return _valueComplete(JsonToken.VALUE_NUMBER_INT);
         }
 
-        return _finishUnsignedNumber();
+        return _finishNumber();
     }
 
-    private JsonToken _finishUnsignedNumber() throws IOException {
+    private JsonToken _finishNumber() throws IOException {
         while (_inputPtr < _inputEnd && _pendingBytesLen-- > 0) {
             if (_numTypesValid == NR_LONG) {
                 _pending64 = (_pending64 << 8) | (_inputBuffer[_inputPtr++] & 0xFF);
@@ -184,18 +194,34 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
     private void _numIsFinished() {
         if ((_numTypesValid & NR_LONG) != 0) {
             if (_pending64 < 0L) {
-                _numberBigInt = _bigPositive(_pending64);
                 _numTypesValid = NR_BIGINT;
+                if (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) {
+                    _numberBigInt = BigInteger.ONE.negate().subtract(_bigPositive(_pending64));
+                } else {
+                    _numberBigInt = _bigPositive(_pending64);
+                }
                 return;
             }
-            _numberLong = _pending64;
+            if (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) {
+                _numberLong = -1 - _pending64;
+            } else {
+                _numberLong = _pending64;
+            }
         } else {
             if (_pending32 < 0) {
-                _numberLong = _pending32 & 0xFFFFFFFFL;
                 _numTypesValid = NR_LONG;
+                if (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) {
+                    _numberLong = -1 - (_pending32 & 0xFFFFFFFFL);
+                } else {
+                    _numberLong = _pending32 & 0xFFFFFFFFL;
+                }
                 return;
             }
-            _numberInt = _pending32;
+            if (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) {
+                _numberInt = -1 - _pending32;
+            } else {
+                _numberInt = _pending32;
+            }
         }
     }
 
@@ -206,6 +232,7 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
         _pending64 = 0;
         _pending32 = 0;
         _numTypesValid = NR_UNKNOWN;
+        _majorType = -1;
     }
 
     /*

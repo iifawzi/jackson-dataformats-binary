@@ -3,7 +3,9 @@ package com.fasterxml.jackson.dataformat.cbor.parse.async;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
+import com.fasterxml.jackson.dataformat.cbor.CBORConstants;
 import com.fasterxml.jackson.dataformat.cbor.CBORFactory;
+import com.fasterxml.jackson.dataformat.cbor.CBORParser;
 import com.fasterxml.jackson.dataformat.cbor.async.AsyncReaderWrapper;
 import com.fasterxml.jackson.dataformat.cbor.async.AsyncTestBase;
 import org.junit.jupiter.api.Test;
@@ -21,47 +23,31 @@ public class AsyncNumberParseTest extends AsyncTestBase {
     @Test
     public void testIntValues() throws Exception {
         CBORFactory f = cborFactory();
-        _testInt(f, 0);
-        _testInt(f, 23);
-        // single byte
+        _testInt(f, 13);
+        _testInt(f, -19);
+        // two bytes
         _testInt(f, 255);
-        _testInt(f, 23);
-        // 2 bytes
+        _testInt(f, -127);
+        // three
         _testInt(f, 256);
-        _testInt(f, 65535);
-        // 3 bytes
-        _testInt(f, 65536);
-        _testInt(f, 16777215);
-        // 4 bytes
-        _testInt(f, 16777216);
-        _testInt(f, 2147483647);
+        _testInt(f, 0xFFFF);
+        _testInt(f, -300);
+        _testInt(f, -0xFFFF);
+        // and all 4 bytes
+        _testInt(f, 0x7FFFFFFF);
+        _testInt(f, -0x7FFF0002);
+        _testInt(f, 0x70000000 << 1);
     }
 
     @Test
     public void testLongValues() throws Exception {
         CBORFactory f = cborFactory();
 
-        // 4 bytes
-        _testLong(f, 2147483648L);
-        _testLong(f, 4294967295L);
-
-        // 5 bytes
-        _testLong(f, 4294967296L);
-        _testLong(f, 34359738367L);
-
-        // 6 bytes
-        _testLong(f, 34359738368L);
-        _testLong(f, 281474976710655L);
-
-        // 7 bytes
-        _testLong(f, 281474976710656L);
-        _testLong(f, 72057594037927935L);
-
-        // 8 bytes
-        _testLong(f, 72057594037927936L);
-        _testLong(f, 9223372036854775807L);
+        _testLong(f, 1L + Integer.MAX_VALUE);
+        _testLong(f, Long.MIN_VALUE);
+        _testLong(f, Long.MAX_VALUE);
+        _testLong(f, -1L + Integer.MIN_VALUE);
     }
-
 
 
     public void _testInt(CBORFactory f, int value) throws Exception {
