@@ -90,6 +90,7 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
         }
 
         _clearRetainedNumData();
+        _clearRetainedTagsData();
         int ch = _inputBuffer[_inputPtr++] & 0xFF;
 
         switch (_majorState) {
@@ -107,8 +108,10 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
     protected final JsonToken _finishToken() throws IOException {
 
         switch (_minorState) {
-            case MINOR_VALUE_UNSIGNED_INT:
+            case MINOR_VALUE_INT:
                 return _finishNumber();
+            case MINOR_VALUE_TAG:
+                return _finishTag();
         }
         throw new IllegalStateException("Illegal state when trying to complete token: majorState=" + _majorState);
     }
@@ -129,11 +132,16 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
 
         switch (type) {
             case CBORConstants.MAJOR_TYPE_INT_POS:
-                _majorType = CBORConstants.MAJOR_TYPE_INT_POS;
+                _typeByte = CBORConstants.MAJOR_TYPE_INT_POS;
                 return _startNumber(lowBits);
             case CBORConstants.MAJOR_TYPE_INT_NEG:
-                _majorType = CBORConstants.MAJOR_TYPE_INT_NEG;
+                _typeByte = CBORConstants.MAJOR_TYPE_INT_NEG;
                 return _startNumber(lowBits);
+            case CBORConstants.MAJOR_TYPE_BYTES:
+                return _startNumber(lowBits);
+            case CBORConstants.MAJOR_TYPE_TAG: // TODO:: ensure no memory issues
+                return _startTag(lowBits);
+
         }
         // If we get this far, type byte is corrupt
         _reportError("Invalid type marker byte 0x%02x for expected value token", ch & 0xFF);
@@ -152,7 +160,7 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
 
         // common case first: have all we need
         if (lowBits <= 23) {
-            if (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) {
+            if (_typeByte == CBORConstants.MAJOR_TYPE_INT_NEG) {
                 _numberInt = -1 - lowBits;
             } else {
                 _numberInt = lowBits;
@@ -174,7 +182,7 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
         }
 
         if (_pendingBytesLen != 0) {
-            _minorState = MINOR_VALUE_UNSIGNED_INT;
+            _minorState = MINOR_VALUE_INT;
             return _updateTokenToNA();
         }
 
@@ -197,7 +205,7 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
                 _promoteToAndSetBigInteger();
                 return;
             }
-            _numberLong = (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) ? -1L - _pending64 : _pending64;
+            _numberLong = (_typeByte == CBORConstants.MAJOR_TYPE_INT_NEG) ? -1L - _pending64 : _pending64;
             return;
         }
 
@@ -205,12 +213,12 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
             _promoteToAndSetLong();
             return;
         }
-        _numberInt = (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) ? -1 - _pending32 : _pending32;
+        _numberInt = (_typeByte == CBORConstants.MAJOR_TYPE_INT_NEG) ? -1 - _pending32 : _pending32;
     }
 
     private void _promoteToAndSetBigInteger() {
         _numTypesValid = NR_BIGINT;
-        if (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) {
+        if (_typeByte == CBORConstants.MAJOR_TYPE_INT_NEG) {
             _numberBigInt = BigInteger.ONE.negate().subtract(_bigPositive(_pending64));
         } else {
             _numberBigInt = _bigPositive(_pending64);
@@ -220,8 +228,7 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
     private void _promoteToAndSetLong() {
         _numTypesValid = NR_LONG;
         long unsignedValue = _pending32 & 0xFFFFFFFFL;
-        _numberLong = (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) ?
-                -1L - unsignedValue : unsignedValue;
+        _numberLong = (_typeByte == CBORConstants.MAJOR_TYPE_INT_NEG) ? -1L - unsignedValue : unsignedValue;
     }
 
 
@@ -232,7 +239,54 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
         _pending64 = 0;
         _pending32 = 0;
         _numTypesValid = NR_UNKNOWN;
-        _majorType = -1;
+        _typeByte = -1;
+    }
+
+    /*
+    /**********************************************************************
+    /* Internal methods: second-level parsing: Tags
+    /**********************************************************************
+    */
+
+    private JsonToken _startTag(int lowBits) throws IOException {
+        if (lowBits <= 23) {
+            _tagValues.add(lowBits);
+            return _startValueAfterTag();
+        }
+
+        _pendingBytesLen = _decodeNeededBytes(lowBits);
+        return _finishTag();
+    }
+
+    private JsonToken _startValueAfterTag() throws IOException {
+        int ch = _inputBuffer[_inputPtr++] & 0xFF;
+        int type = ch >> 5;
+
+        // another tag to process
+        if (type == CBORConstants.MAJOR_TYPE_TAG) {
+            return _startTag(ch & 0x1F);
+        }
+        return _startValue(ch);
+    }
+
+    private JsonToken _finishTag() throws IOException {
+        // for now we're supporting only int tag values (up to 2^31 - 1)
+        while (_inputPtr < _inputEnd && _pendingBytesLen-- > 0) {
+            _pending32 = (_pending32 << 8) | (_inputBuffer[_inputPtr++] & 0xFF);
+        }
+
+        if (_pendingBytesLen != 0) {
+            _minorState = MINOR_VALUE_TAG;
+            return _updateTokenToNA();
+        }
+
+        // no more bytes needed, tag finished.
+        _tagValues.add(_pending32);
+        return _startValueAfterTag();
+    }
+
+    private void _clearRetainedTagsData() {
+        _tagValues.clear();
     }
 
     /*

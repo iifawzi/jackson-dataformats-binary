@@ -36,7 +36,8 @@ public abstract class NonBlockingParserBase extends CBORParserBase {
     protected final static int MAJOR_CLOSED = 5;
 
     // // // "Sub-states"
-    protected final static int MINOR_VALUE_UNSIGNED_INT = 1;
+    protected final static int MINOR_VALUE_INT = 1;
+    protected final static int MINOR_VALUE_TAG = 2;
 
     /*
     /**********************************************************************
@@ -112,7 +113,7 @@ public abstract class NonBlockingParserBase extends CBORParserBase {
     /**
      * Flag Indicating which majorType we're processing
      */
-    protected int _majorType;
+    protected int _typeByte;
 
     /*
     /**********************************************************************
