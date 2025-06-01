@@ -38,6 +38,7 @@ public abstract class NonBlockingParserBase extends CBORParserBase {
     // // // "Sub-states"
     protected final static int MINOR_VALUE_INT = 1;
     protected final static int MINOR_VALUE_TAG = 2;
+    protected final static int MINOR_VALUE_BINARY = 3;
 
     /*
     /**********************************************************************
@@ -69,6 +70,12 @@ public abstract class NonBlockingParserBase extends CBORParserBase {
      * Number of bytes needed to finish decoding a major type
      */
     protected int _pendingBytesLen;
+
+    /**
+     * Number of bytes pending to be skipped for Binary data
+     */
+    protected int _pendingBytesToSkip;
+    protected Long _pendingBytesToSkipLong;
 
     /**
      * Temporary storage for 32-bit values (int, float), as well as length markers
@@ -113,7 +120,7 @@ public abstract class NonBlockingParserBase extends CBORParserBase {
     /**
      * Flag Indicating which majorType we're processing
      */
-    protected int _typeByte;
+    protected int _majorType;
 
     /*
     /**********************************************************************

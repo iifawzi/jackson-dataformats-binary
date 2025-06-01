@@ -90,7 +90,6 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
         }
 
         _clearRetainedNumData();
-        _clearRetainedTagsData();
         int ch = _inputBuffer[_inputPtr++] & 0xFF;
 
         switch (_majorState) {
@@ -112,6 +111,8 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
                 return _finishNumber();
             case MINOR_VALUE_TAG:
                 return _finishTag();
+            case MINOR_VALUE_BINARY:
+                return _finishBinary();
         }
         throw new IllegalStateException("Illegal state when trying to complete token: majorState=" + _majorState);
     }
@@ -132,13 +133,13 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
 
         switch (type) {
             case CBORConstants.MAJOR_TYPE_INT_POS:
-                _typeByte = CBORConstants.MAJOR_TYPE_INT_POS;
+                _majorType = CBORConstants.MAJOR_TYPE_INT_POS;
                 return _startNumber(lowBits);
             case CBORConstants.MAJOR_TYPE_INT_NEG:
-                _typeByte = CBORConstants.MAJOR_TYPE_INT_NEG;
+                _majorType = CBORConstants.MAJOR_TYPE_INT_NEG;
                 return _startNumber(lowBits);
             case CBORConstants.MAJOR_TYPE_BYTES:
-                return _startNumber(lowBits);
+                return _startBinary(lowBits);
             case CBORConstants.MAJOR_TYPE_TAG: // TODO:: ensure no memory issues
                 return _startTag(lowBits);
 
@@ -160,7 +161,7 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
 
         // common case first: have all we need
         if (lowBits <= 23) {
-            if (_typeByte == CBORConstants.MAJOR_TYPE_INT_NEG) {
+            if (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) {
                 _numberInt = -1 - lowBits;
             } else {
                 _numberInt = lowBits;
@@ -205,7 +206,7 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
                 _promoteToAndSetBigInteger();
                 return;
             }
-            _numberLong = (_typeByte == CBORConstants.MAJOR_TYPE_INT_NEG) ? -1L - _pending64 : _pending64;
+            _numberLong = (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) ? -1L - _pending64 : _pending64;
             return;
         }
 
@@ -213,12 +214,12 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
             _promoteToAndSetLong();
             return;
         }
-        _numberInt = (_typeByte == CBORConstants.MAJOR_TYPE_INT_NEG) ? -1 - _pending32 : _pending32;
+        _numberInt = (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) ? -1 - _pending32 : _pending32;
     }
 
     private void _promoteToAndSetBigInteger() {
         _numTypesValid = NR_BIGINT;
-        if (_typeByte == CBORConstants.MAJOR_TYPE_INT_NEG) {
+        if (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) {
             _numberBigInt = BigInteger.ONE.negate().subtract(_bigPositive(_pending64));
         } else {
             _numberBigInt = _bigPositive(_pending64);
@@ -228,7 +229,7 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
     private void _promoteToAndSetLong() {
         _numTypesValid = NR_LONG;
         long unsignedValue = _pending32 & 0xFFFFFFFFL;
-        _numberLong = (_typeByte == CBORConstants.MAJOR_TYPE_INT_NEG) ? -1L - unsignedValue : unsignedValue;
+        _numberLong = (_majorType == CBORConstants.MAJOR_TYPE_INT_NEG) ? -1L - unsignedValue : unsignedValue;
     }
 
 
@@ -239,7 +240,7 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
         _pending64 = 0;
         _pending32 = 0;
         _numTypesValid = NR_UNKNOWN;
-        _typeByte = -1;
+        _majorType = -1;
     }
 
     /*
@@ -287,6 +288,96 @@ public class NonBlockingByteArrayParser extends NonBlockingParserBase implements
 
     private void _clearRetainedTagsData() {
         _tagValues.clear();
+    }
+
+
+    /*
+    /**********************************************************************
+    /* Internal methods: second-level parsing: Binary
+    /**********************************************************************
+    */
+
+    private JsonToken _startBinary(int lowBits) throws IOException {
+        if (!_tagValues.isEmpty()) { // todo implement support for tagged binary
+            return _updateTokenToNA();
+        }
+
+        if (lowBits <= 23) {
+            return _skipBytes(lowBits);
+        }
+
+        _pendingBytesLen = _decodeNeededBytes(lowBits);
+        _setNumTypesValid(); // type will be used in _finishBinary() logic.
+        return _finishBinary();
+    }
+
+    private JsonToken _skipBytes(int len) throws IOException {
+        int toAdd = Math.min(len, _inputEnd - _inputPtr);
+        _inputPtr += toAdd;
+        len -= toAdd;
+
+        if (len != 0) {
+            _minorState = MINOR_VALUE_BINARY;
+            _pendingBytesToSkip = len;
+            return _updateTokenToNA();
+        }
+
+        _pendingBytesToSkip = 0;
+        _clearRetainedTagsData();
+        return _valueComplete(JsonToken.VALUE_EMBEDDED_OBJECT);
+    }
+
+    private JsonToken _skipBytesL(long len) throws IOException {
+       while (_inputPtr < _inputEnd && len-- > 0) {
+            _inputPtr++;
+        }
+
+        if (len != 0L) {
+            _minorState = MINOR_VALUE_BINARY;
+            _pendingBytesToSkipLong = len;
+            return _updateTokenToNA();
+        }
+
+        _pendingBytesToSkipLong = 0L;
+        _clearRetainedTagsData();
+        return _valueComplete(JsonToken.VALUE_EMBEDDED_OBJECT);
+    }
+
+    private JsonToken _finishBinary() throws IOException {
+        // if we have pending bytes to skip, do that first (if lowBits <= 23)
+        if (_pendingBytesToSkip > 0) {
+            return _skipBytes(_pendingBytesToSkip);
+        } else if (_pendingBytesToSkipLong > 0L) {
+            return _skipBytesL(_pendingBytesToSkipLong);
+        }
+
+        // no bytes to skip yet, we need to decode it first.
+        // we need to complete the bytes that will tell us how many bytes to skip (max 8 bytes)
+        while (_inputPtr < _inputEnd && _pendingBytesLen-- > 0) {
+            if (_numTypesValid == NR_LONG) {
+                _pending64 = (_pending64 << 8) | (_inputBuffer[_inputPtr++] & 0xFF);
+            } else {
+                _pending32 = (_pending32 << 8) | (_inputBuffer[_inputPtr++] & 0xFF);
+            }
+        }
+
+        if (_pendingBytesLen != 0) {
+            _minorState = MINOR_VALUE_BINARY;
+            return _updateTokenToNA();
+        }
+
+        // we have all the bytes needed to decode how many bytes to skip, try to finish.
+        return _finishBinaryBytesToSkip();
+    }
+
+    private JsonToken _finishBinaryBytesToSkip() throws IOException {
+        if ((_numTypesValid & NR_LONG) != 0) {
+            _pendingBytesToSkipLong = _pending64;
+            return _skipBytesL(_pendingBytesToSkipLong);
+        }
+
+        _pendingBytesToSkip = _pending32;
+        return _skipBytes(_pendingBytesToSkip);
     }
 
     /*
